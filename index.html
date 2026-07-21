@@ -21,8 +21,8 @@ button.mode-active{background:#17202a;color:#fff;border-color:#17202a}
 .status{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px;display:flex;justify-content:space-between;gap:10px}
 .status b{font-size:17px}.status span{color:var(--muted);font-size:13px}
 .message{display:none;background:#fff4e5;border:1px solid #f7b955;border-radius:12px;padding:10px 12px;margin-bottom:10px;font-size:14px;line-height:1.4}
-.stage{background:#111;border-radius:14px;overflow:auto;min-height:280px;display:block;-webkit-overflow-scrolling:touch}
-canvas{display:block;max-width:none;height:auto;touch-action:pan-x pan-y}.empty{color:#fff;text-align:center;padding:40px 20px;line-height:1.5;width:100%}
+.stage{background:#111;border-radius:14px;overflow:auto;height:62vh;min-height:340px;max-height:720px;display:block;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;position:relative}
+canvas{display:block;max-width:none;height:auto;touch-action:none}.empty{color:#fff;text-align:center;padding:40px 20px;line-height:1.5;width:100%}
 .options{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px}
 .opt{display:grid;grid-template-columns:130px 1fr;gap:10px;align-items:center;margin:10px 0}.opt label{font-weight:700;font-size:14px}
 input[type=range]{width:100%}.note{font-size:13px;color:var(--muted);line-height:1.45}
@@ -30,7 +30,7 @@ input[type=range]{width:100%}.note{font-size:13px;color:var(--muted);line-height
 </style>
 </head>
 <body>
-<header><h1>Sharlston Quick ID <span style="font-size:12px;color:var(--muted);font-weight:700">v7</span></h1><p>Scroll safely by default. Edit mode now supports selecting several numbers at once.</p></header>
+<header><h1>Sharlston Quick ID <span style="font-size:12px;color:var(--muted);font-weight:700">v8</span></h1><p>Drag the photograph freely in Pan mode. Edit and Add remain separate.</p></header>
 <main>
 <div class="toolbar">
 <label class="pick primary">Choose photo<input id="file" type="file" accept="image/*"></label>
@@ -51,7 +51,7 @@ input[type=range]{width:100%}.note{font-size:13px;color:var(--muted);line-height
 <div class="opt"><label>Expected people</label><input id="expected" type="number" min="1" max="300" inputmode="numeric" placeholder="e.g. 29" style="width:100%;min-height:44px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:16px"></div>
 <div class="opt"><label>Number size</label><input id="size" type="range" min="18" max="74" value="38"></div>
 <div class="opt"><label>Outline</label><input id="outline" type="range" min="1" max="9" value="4"></div>
-<p class="note"><strong>Scroll</strong> is the safe default. In <strong>Edit numbers</strong>, tap several numbered circles to select or deselect them. Dragging still moves one number. Tap <strong>Delete selected</strong> to remove every selected number at once. Remaining numbers are resequenced automatically.</p>
+<p class="note"><strong>Pan photo</strong> is the safe default. Drag anywhere on the photograph to move left, right, up or down. In <strong>Edit numbers</strong>, tap several circles to select them or drag one to move it. Use <strong>Add number</strong> only for missed faces.</p>
 </div>
 </main>
 
@@ -59,10 +59,10 @@ input[type=range]{width:100%}.note{font-size:13px;color:var(--muted);line-height
 import { FaceDetector, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs";
 if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js').catch(()=>{});}
 
-const $=id=>document.getElementById(id),file=$('file'),canvas=$('canvas'),ctx=canvas.getContext('2d');
+const $=id=>document.getElementById(id),file=$('file'),canvas=$('canvas'),ctx=canvas.getContext('2d'),stage=document.querySelector('.stage');
 const empty=$('empty'),auto=$('auto'),scrollMode=$('scrollMode'),editMode=$('editMode'),addMode=$('addMode'),deleteSelected=$('deleteSelected'),undo=$('undo'),redo=$('redo'),clear=$('clear'),save=$('save'),size=$('size'),outline=$('outline'),expected=$('expected'),message=$('message');
 
-let img=null,marks=[],redoStack=[],drag=null,detector=null,detectorLoading=false,selected=new Set(),downPoint=null,dragMoved=false,mode='scroll';
+let img=null,marks=[],redoStack=[],drag=null,detector=null,detectorLoading=false,selected=new Set(),downPoint=null,dragMoved=false,mode='scroll',panStart=null;
 const radius=()=>Math.max(12,+size.value*.52);
 const show=t=>{message.textContent=t;message.style.display='block'};
 const hide=()=>message.style.display='none';
@@ -72,9 +72,9 @@ function setMode(nextMode){
   scrollMode.classList.toggle('mode-active',mode==='scroll');
   editMode.classList.toggle('mode-active',mode==='edit');
   addMode.classList.toggle('mode-active',mode==='add');
-  canvas.style.touchAction=mode==='scroll'?'pan-x pan-y':'none';
+  canvas.style.touchAction='none';
   selected.clear();drag=null;draw();ui();
-  if(mode==='scroll')show('Scroll mode: move around the photograph safely. Nothing will be added or deleted.');
+  if(mode==='scroll')show('Pan mode: drag the photograph freely in any direction. Nothing will be added or deleted.');
   if(mode==='edit')show('Edit mode: tap a number to select it, or drag it to reposition it.');
   if(mode==='add')show('Add mode: tap a missed face to add the next number.');
 }
@@ -106,12 +106,16 @@ function draw(){
   }
 }
 function fit(){
-  const phoneWidth=Math.max(900,window.innerWidth*1.6);
-  const w=Math.min(1800,Math.max(phoneWidth,img.naturalWidth));
+  const phoneWidth=Math.max(1100,window.innerWidth*2.2);
+  const w=Math.min(2200,Math.max(phoneWidth,img.naturalWidth));
   const s=w/img.naturalWidth;
   canvas.width=Math.round(img.naturalWidth*s);
   canvas.height=Math.round(img.naturalHeight*s);
   draw();
+  requestAnimationFrame(()=>{
+    stage.scrollLeft=Math.max(0,(canvas.width-stage.clientWidth)/2);
+    stage.scrollTop=0;
+  });
 }
 function point(e){
   const r=canvas.getBoundingClientRect(),t=e.touches?e.touches[0]:e.changedTouches?e.changedTouches[0]:e;
@@ -130,21 +134,51 @@ function clamp(m){
   m.y=Math.max(r,Math.min(canvas.height-r,m.y));
 }
 canvas.addEventListener('pointerdown',e=>{
-  if(!img||mode==='scroll')return;
+  if(!img)return;
   e.preventDefault();
+
+  if(mode==='scroll'){
+    canvas.setPointerCapture?.(e.pointerId);
+    panStart={
+      x:e.clientX,
+      y:e.clientY,
+      left:stage.scrollLeft,
+      top:stage.scrollTop
+    };
+    return;
+  }
+
   downPoint=point(e);
   drag=mode==='edit'?hit(downPoint):null;
   dragMoved=false;
 });
+
 canvas.addEventListener('pointermove',e=>{
+  if(!img)return;
+
+  if(mode==='scroll' && panStart){
+    e.preventDefault();
+    stage.scrollLeft=panStart.left-(e.clientX-panStart.x);
+    stage.scrollTop=panStart.top-(e.clientY-panStart.y);
+    return;
+  }
+
   if(mode!=='edit'||!drag)return;
   e.preventDefault();
   const q=point(e);
   if(Math.hypot(q.x-downPoint.x,q.y-downPoint.y)>7)dragMoved=true;
   if(dragMoved){drag.x=q.x;drag.y=q.y;clamp(drag);draw();}
 });
+
 canvas.addEventListener('pointerup',e=>{
-  if(!img||mode==='scroll')return;
+  if(!img)return;
+
+  if(mode==='scroll'){
+    panStart=null;
+    try{canvas.releasePointerCapture?.(e.pointerId)}catch(_){}
+    return;
+  }
+
   e.preventDefault();
   const q=point(e);
 
@@ -177,10 +211,15 @@ canvas.addEventListener('pointerup',e=>{
   if(mode==='add'){
     const m={n:marks.length+1,x:q.x,y:q.y};
     clamp(m);marks.push(m);redoStack=[];selected.clear();draw();ui();
-    show(`Number ${m.n} added. Return to Scroll mode when finished.`);
+    show(`Number ${m.n} added. Return to Pan photo when finished.`);
   }
 });
-canvas.addEventListener('pointercancel',()=>{drag=null;dragMoved=false});
+
+canvas.addEventListener('pointercancel',()=>{
+  drag=null;
+  dragMoved=false;
+  panStart=null;
+});
 
 scrollMode.onclick=()=>setMode('scroll');
 editMode.onclick=()=>setMode('edit');
