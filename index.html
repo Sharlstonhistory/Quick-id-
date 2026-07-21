@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#1769e0">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Sharlston Quick ID</title>
+<style>
+:root{--blue:#1769e0;--bg:#f4f6f8;--panel:#fff;--line:#d0d5dd;--text:#182230;--muted:#667085;--danger:#d92d20}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+header{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--line);padding:calc(12px + env(safe-area-inset-top)) 14px 12px}
+h1{margin:0;font-size:20px}header p{margin:4px 0 0;color:var(--muted);font-size:13px}
+main{max-width:1000px;margin:auto;padding:12px 12px calc(24px + env(safe-area-inset-bottom))}
+.toolbar{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+button,.pick{min-height:50px;border-radius:12px;border:1px solid var(--line);background:#fff;font-size:16px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:10px}
+.primary{background:var(--blue);color:#fff;border-color:var(--blue)}.danger{color:var(--danger)}
+button:disabled{opacity:.4}.pick input{display:none}
+.status{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px;display:flex;justify-content:space-between;gap:10px}
+.status b{font-size:17px}.status span{color:var(--muted);font-size:13px}
+.stage{background:#111;border-radius:14px;overflow:auto;min-height:280px;display:flex;align-items:center;justify-content:center}
+canvas{display:block;max-width:100%;height:auto;touch-action:none}.empty{color:#fff;text-align:center;padding:40px 20px;line-height:1.5}
+.options{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px}
+.opt{display:grid;grid-template-columns:130px 1fr;gap:10px;align-items:center;margin:10px 0}.opt label{font-weight:700;font-size:14px}
+input[type=range]{width:100%}.note{font-size:13px;color:var(--muted);line-height:1.45}
+@media(min-width:700px){.toolbar{grid-template-columns:repeat(5,1fr)}}
+</style>
+</head>
+<body>
+<header><h1>Sharlston Quick ID</h1><p>Choose a photograph, then tap each person once. Numbers are always sequential and unique.</p></header>
+<main>
+<div class="toolbar">
+<label class="pick primary">Choose photo<input id="file" type="file" accept="image/*"></label>
+<button id="undo" disabled>Undo</button>
+<button id="redo" disabled>Redo</button>
+<button id="clear" class="danger" disabled>Clear all</button>
+<button id="save" class="primary" disabled>Save image</button>
+</div>
+<div class="status"><div><b id="next">Next number: 1</b><br><span id="count">0 people numbered</span></div><span id="info">No image loaded</span></div>
+<div class="stage"><div id="empty" class="empty">Choose a group photograph.<br>Tap faces left to right, row by row.</div><canvas id="canvas" hidden></canvas></div>
+<div class="options">
+<div class="opt"><label>Number size</label><input id="size" type="range" min="18" max="74" value="38"></div>
+<div class="opt"><label>Outline</label><input id="outline" type="range" min="1" max="9" value="4"></div>
+<p class="note">Tap an empty position to add the next number. Drag an existing number to move it. Undo removes the most recent number. The photograph stays on your device.</p>
+</div>
+</main>
+<script>
+if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js').catch(()=>{});}
+const $=id=>document.getElementById(id), file=$('file'),canvas=$('canvas'),ctx=canvas.getContext('2d');
+const empty=$('empty'),undo=$('undo'),redo=$('redo'),clear=$('clear'),save=$('save'),size=$('size'),outline=$('outline');
+let img=null,marks=[],redoStack=[],drag=null,moved=false,startPoint=null;
+const radius=()=>Math.max(12,+size.value*.52);
+function ui(){let n=marks.length;$('next').textContent=`Next number: ${n+1}`;$('count').textContent=`${n} ${n===1?'person':'people'} numbered`;undo.disabled=!n;clear.disabled=!n;redo.disabled=!redoStack.length;save.disabled=!img||!n}
+function draw(){if(!img)return;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height);ctx.textAlign='center';ctx.textBaseline='middle';ctx.font=`700 ${+size.value}px -apple-system,BlinkMacSystemFont,"Segoe UI",Arial`;for(const m of marks){ctx.beginPath();ctx.arc(m.x,m.y,radius(),0,Math.PI*2);ctx.fillStyle='rgba(255,255,255,.95)';ctx.fill();ctx.lineWidth=+outline.value;ctx.strokeStyle='#111';ctx.stroke();ctx.fillStyle='#111';ctx.fillText(m.n,m.x,m.y+1)}}
+function fit(){let w=Math.min(1600,img.naturalWidth),s=w/img.naturalWidth;canvas.width=Math.round(img.naturalWidth*s);canvas.height=Math.round(img.naturalHeight*s);draw()}
+function p(e){let r=canvas.getBoundingClientRect(),t=e.touches?e.touches[0]:e.changedTouches?e.changedTouches[0]:e;return{x:(t.clientX-r.left)*canvas.width/r.width,y:(t.clientY-r.top)*canvas.height/r.height}}
+function hit(q){for(let i=marks.length-1;i>=0;i--){let m=marks[i];if(Math.hypot(q.x-m.x,q.y-m.y)<=radius()*1.3)return m}return null}
+function down(e){if(!img)return;e.preventDefault();let q=p(e);startPoint=q;drag=hit(q);moved=false}
+function move(e){if(!drag)return;e.preventDefault();let q=p(e);if(Math.hypot(q.x-startPoint.x,q.y-startPoint.y)>3)moved=true;drag.x=Math.max(radius(),Math.min(canvas.width-radius(),q.x));drag.y=Math.max(radius(),Math.min(canvas.height-radius(),q.y));draw()}
+function up(e){if(!img)return;e.preventDefault();let q=p(e);if(drag){drag=null;draw();return}marks.push({n:marks.length+1,x:q.x,y:q.y});redoStack=[];draw();ui()}
+['pointerdown'].forEach(x=>canvas.addEventListener(x,down));canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',()=>drag=null);
+file.onchange=()=>{let f=file.files[0];if(!f)return;let url=URL.createObjectURL(f),im=new Image();im.onload=()=>{img=im;marks=[];redoStack=[];empty.hidden=true;canvas.hidden=false;$('info').textContent=`${im.naturalWidth} × ${im.naturalHeight}`;fit();ui();URL.revokeObjectURL(url)};im.src=url}
+undo.onclick=()=>{if(marks.length){redoStack.push(marks.pop());draw();ui()}}
+redo.onclick=()=>{if(redoStack.length){let m=redoStack.pop();m.n=marks.length+1;marks.push(m);draw();ui()}}
+clear.onclick=()=>{if(confirm('Remove every number?')){marks=[];redoStack=[];draw();ui()}}
+size.oninput=draw;outline.oninput=draw;
+save.onclick=()=>{let out=document.createElement('canvas'),o=out.getContext('2d');out.width=img.naturalWidth;out.height=img.naturalHeight;o.drawImage(img,0,0);let sx=out.width/canvas.width,sy=out.height/canvas.height,sc=(sx+sy)/2,fs=+size.value*sc,rad=radius()*sc;o.textAlign='center';o.textBaseline='middle';o.font=`700 ${fs}px -apple-system,BlinkMacSystemFont,"Segoe UI",Arial`;for(const m of marks){let x=m.x*sx,y=m.y*sy;o.beginPath();o.arc(x,y,rad,0,Math.PI*2);o.fillStyle='rgba(255,255,255,.95)';o.fill();o.lineWidth=+outline.value*sc;o.strokeStyle='#111';o.stroke();o.fillStyle='#111';o.fillText(m.n,x,y+sc)}out.toBlob(blob=>{let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='sharlston-numbered-photo.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)},'image/png')}
+ui();
+</script>
+</body></html>
