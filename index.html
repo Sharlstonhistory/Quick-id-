@@ -45,7 +45,7 @@ input[type=range]{width:100%}.note{font-size:13px;color:var(--muted);line-height
 <div class="options">
 <div class="opt"><label>Number size</label><input id="size" type="range" min="18" max="74" value="38"></div>
 <div class="opt"><label>Outline</label><input id="outline" type="range" min="1" max="9" value="4"></div>
-<p class="note">The tiled detector enlarges overlapping sections of the photograph to find small faces. It may still miss hats, side profiles or damaged faces. Tap any missed face to add the next number and drag numbers to reposition them.</p>
+<p class="note">Version 4 uses four overlapping tile sizes and scans each tile twice: once normally and once with enhanced grayscale contrast. This is slower but is designed for small faces in old group photographs. Check every result before saving.</p>
 </div>
 </main>
 
@@ -163,11 +163,23 @@ function sortRows(faces){
   rows.sort((a,b)=>a.meanY-b.meanY);
   return rows.flatMap(r=>r.items.sort((a,b)=>a.cx-b.cx));
 }
-function makeTileCanvas(source,x,y,w,h,targetW=640){
+function makeTileCanvas(source,x,y,w,h,targetW=640,enhance=false){
   const c=document.createElement('canvas');
   const scale=targetW/w;
   c.width=targetW;c.height=Math.max(1,Math.round(h*scale));
-  c.getContext('2d').drawImage(source,x,y,w,h,0,0,c.width,c.height);
+  const g=c.getContext('2d',{willReadFrequently:true});
+  g.drawImage(source,x,y,w,h,0,0,c.width,c.height);
+
+  if(enhance){
+    const imageData=g.getImageData(0,0,c.width,c.height);
+    const d=imageData.data;
+    for(let i=0;i<d.length;i+=4){
+      const grey=Math.round(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114);
+      const contrasted=Math.max(0,Math.min(255,(grey-128)*1.55+128));
+      d[i]=d[i+1]=d[i+2]=contrasted;
+    }
+    g.putImageData(imageData,0,0);
+  }
   return {canvas:c,scale};
 }
 
@@ -179,12 +191,15 @@ auto.onclick=async()=>{
     const W=img.naturalWidth,H=img.naturalHeight;
     const all=[];
     const layouts=[
-      {cols:2,rows:2,overlap:.22,target:720},
-      {cols:3,rows:3,overlap:.28,target:720},
-      {cols:4,rows:3,overlap:.30,target:760}
+      {cols:3,rows:3,overlap:.30,target:900},
+      {cols:4,rows:4,overlap:.34,target:960},
+      {cols:5,rows:4,overlap:.36,target:1024},
+      {cols:6,rows:5,overlap:.38,target:1024}
     ];
-    let done=0,total=layouts.reduce((s,l)=>s+l.cols*l.rows,0);
+    const passes=[false,true];
+    let done=0,total=layouts.reduce((s,l)=>s+l.cols*l.rows*passes.length,0);
     for(const L of layouts){
+      for(const enhanced of passes){
       const baseW=W/L.cols,baseH=H/L.rows;
       const padX=baseW*L.overlap,padY=baseH*L.overlap;
       for(let ry=0;ry<L.rows;ry++){
@@ -192,7 +207,7 @@ auto.onclick=async()=>{
           const x=Math.max(0,cx*baseW-padX),y=Math.max(0,ry*baseH-padY);
           const x2=Math.min(W,(cx+1)*baseW+padX),y2=Math.min(H,(ry+1)*baseH+padY);
           const tw=x2-x,th=y2-y;
-          const t=makeTileCanvas(img,x,y,tw,th,L.target);
+          const t=makeTileCanvas(img,x,y,tw,th,L.target,enhanced);
           const res=d.detect(t.canvas);
           for(const det of (res.detections||[])){
             const b=det.boundingBox;
@@ -207,13 +222,18 @@ auto.onclick=async()=>{
           await new Promise(r=>setTimeout(r,0));
         }
       }
+      }
     }
-    const unique=dedupe(all).filter(f=>f.w<W*.25&&f.h<H*.35);
+    const unique=dedupe(all).filter(f=>
+      f.w>W*.012 && f.h>H*.018 &&
+      f.w<W*.18 && f.h<H*.24 &&
+      f.score>=0.16
+    );
     const ordered=sortRows(unique);
     const sx=canvas.width/W,sy=canvas.height/H;
     marks=ordered.map((f,i)=>{const m={n:i+1,x:f.cx*sx,y:f.cy*sy};clamp(m);return m});
     redoStack=[];draw();ui();
-    show(`${marks.length} face${marks.length===1?'':'s'} detected. Check the order and tap any faces that were missed.`);
+    show(`${marks.length} face${marks.length===1?'':'s'} detected using the high-detail scan. Check every number, remove false detections with Undo, and tap any missed faces.`);
   }catch(err){
     console.error(err);
     show('The tiled face detector could not complete. Check your internet connection, close and reopen the app, then try again.');
