@@ -30,7 +30,7 @@ input[type=range]{width:100%}.note{font-size:13px;color:var(--muted);line-height
 </style>
 </head>
 <body>
-<header><h1>Sharlston Quick ID <span style="font-size:12px;color:var(--muted);font-weight:700">v6</span></h1><p>Scroll safely by default. Switch to Edit or Add only when needed.</p></header>
+<header><h1>Sharlston Quick ID <span style="font-size:12px;color:var(--muted);font-weight:700">v7</span></h1><p>Scroll safely by default. Edit mode now supports selecting several numbers at once.</p></header>
 <main>
 <div class="toolbar">
 <label class="pick primary">Choose photo<input id="file" type="file" accept="image/*"></label>
@@ -51,7 +51,7 @@ input[type=range]{width:100%}.note{font-size:13px;color:var(--muted);line-height
 <div class="opt"><label>Expected people</label><input id="expected" type="number" min="1" max="300" inputmode="numeric" placeholder="e.g. 29" style="width:100%;min-height:44px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:16px"></div>
 <div class="opt"><label>Number size</label><input id="size" type="range" min="18" max="74" value="38"></div>
 <div class="opt"><label>Outline</label><input id="outline" type="range" min="1" max="9" value="4"></div>
-<p class="note"><strong>Scroll</strong> is the safe default and never adds or deletes numbers. Use <strong>Edit numbers</strong> to select or drag a number, then use <strong>Delete selected</strong>. Use <strong>Add number</strong> only when adding a missed face.</p>
+<p class="note"><strong>Scroll</strong> is the safe default. In <strong>Edit numbers</strong>, tap several numbered circles to select or deselect them. Dragging still moves one number. Tap <strong>Delete selected</strong> to remove every selected number at once. Remaining numbers are resequenced automatically.</p>
 </div>
 </main>
 
@@ -62,7 +62,7 @@ if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js').cat
 const $=id=>document.getElementById(id),file=$('file'),canvas=$('canvas'),ctx=canvas.getContext('2d');
 const empty=$('empty'),auto=$('auto'),scrollMode=$('scrollMode'),editMode=$('editMode'),addMode=$('addMode'),deleteSelected=$('deleteSelected'),undo=$('undo'),redo=$('redo'),clear=$('clear'),save=$('save'),size=$('size'),outline=$('outline'),expected=$('expected'),message=$('message');
 
-let img=null,marks=[],redoStack=[],drag=null,detector=null,detectorLoading=false,selected=null,downPoint=null,dragMoved=false,mode='scroll';
+let img=null,marks=[],redoStack=[],drag=null,detector=null,detectorLoading=false,selected=new Set(),downPoint=null,dragMoved=false,mode='scroll';
 const radius=()=>Math.max(12,+size.value*.52);
 const show=t=>{message.textContent=t;message.style.display='block'};
 const hide=()=>message.style.display='none';
@@ -73,7 +73,7 @@ function setMode(nextMode){
   editMode.classList.toggle('mode-active',mode==='edit');
   addMode.classList.toggle('mode-active',mode==='add');
   canvas.style.touchAction=mode==='scroll'?'pan-x pan-y':'none';
-  selected=null;drag=null;draw();ui();
+  selected.clear();drag=null;draw();ui();
   if(mode==='scroll')show('Scroll mode: move around the photograph safely. Nothing will be added or deleted.');
   if(mode==='edit')show('Edit mode: tap a number to select it, or drag it to reposition it.');
   if(mode==='add')show('Add mode: tap a missed face to add the next number.');
@@ -84,7 +84,8 @@ function ui(){
   $('count').textContent=`${n} ${n===1?'person':'people'} numbered`;
   undo.disabled=!n; clear.disabled=!n; redo.disabled=!redoStack.length;
   save.disabled=!img||!n; auto.disabled=!img||detectorLoading;
-  deleteSelected.disabled=!selected;
+  deleteSelected.disabled=selected.size===0;
+  deleteSelected.textContent=selected.size?`Delete selected (${selected.size})`:'Delete selected';
 }
 
 function draw(){
@@ -98,7 +99,7 @@ function draw(){
     ctx.fillStyle='rgba(255,255,255,.95)';ctx.fill();
     ctx.lineWidth=+outline.value;ctx.strokeStyle='#111';ctx.stroke();
     ctx.fillStyle='#111';ctx.fillText(m.n,m.x,m.y+1);
-    if(selected===m){
+    if(selected.has(m)){
       ctx.beginPath();ctx.arc(m.x,m.y,radius()+6,0,Math.PI*2);
       ctx.lineWidth=3;ctx.strokeStyle='#1769e0';ctx.stroke();
     }
@@ -149,19 +150,33 @@ canvas.addEventListener('pointerup',e=>{
 
   if(mode==='edit'){
     if(drag){
-      selected=drag;
+      const current=drag;
       drag=null;
-      draw();ui();
-      show(dragMoved?`Number ${selected.n} moved.`:`Number ${selected.n} selected. Use Delete selected to remove it.`);
+      if(dragMoved){
+        selected.clear();
+        selected.add(current);
+        draw();ui();
+        show(`Number ${current.n} moved.`);
+      }else{
+        if(selected.has(current)){
+          selected.delete(current);
+        }else{
+          selected.add(current);
+        }
+        draw();ui();
+        show(selected.size
+          ? `${selected.size} number${selected.size===1?'':'s'} selected. Tap more numbers or use Delete selected.`
+          : 'No numbers selected.');
+      }
     }else{
-      selected=null;draw();ui();
+      show('Tap directly on a numbered circle to select it.');
     }
     return;
   }
 
   if(mode==='add'){
     const m={n:marks.length+1,x:q.x,y:q.y};
-    clamp(m);marks.push(m);redoStack=[];selected=null;draw();ui();
+    clamp(m);marks.push(m);redoStack=[];selected.clear();draw();ui();
     show(`Number ${m.n} added. Return to Scroll mode when finished.`);
   }
 });
@@ -171,22 +186,21 @@ scrollMode.onclick=()=>setMode('scroll');
 editMode.onclick=()=>setMode('edit');
 addMode.onclick=()=>setMode('add');
 deleteSelected.onclick=()=>{
-  if(!selected)return;
-  const removed=selected.n;
-  const i=marks.indexOf(selected);
-  if(i>=0){
-    marks.splice(i,1);
-    marks.forEach((m,j)=>m.n=j+1);
-    selected=null;redoStack=[];draw();ui();
-    show(`Number ${removed} deleted. Remaining numbers were resequenced.`);
-  }
+  if(selected.size===0)return;
+  const count=selected.size;
+  marks=marks.filter(m=>!selected.has(m));
+  marks.forEach((m,j)=>m.n=j+1);
+  selected.clear();
+  redoStack=[];
+  draw();ui();
+  show(`${count} selected number${count===1?'':'s'} deleted. Remaining numbers were resequenced.`);
 };
 
 file.onchange=()=>{
   const f=file.files[0];if(!f)return;
   hide();
   const url=URL.createObjectURL(f),im=new Image();
-  im.onload=()=>{img=im;marks=[];redoStack=[];selected=null;mode='scroll';empty.hidden=true;canvas.hidden=false;$('info').textContent=`${im.naturalWidth} × ${im.naturalHeight}`;fit();ui();URL.revokeObjectURL(url)};
+  im.onload=()=>{img=im;marks=[];redoStack=[];selected.clear();mode='scroll';empty.hidden=true;canvas.hidden=false;$('info').textContent=`${im.naturalWidth} × ${im.naturalHeight}`;fit();ui();URL.revokeObjectURL(url)};
   im.onerror=()=>show('That photograph could not be opened. Try saving it as a JPG or PNG first.');
   im.src=url;
 };
@@ -315,7 +329,7 @@ auto.onclick=async()=>{
     const ordered=sortRows(unique);
     const sx=canvas.width/W,sy=canvas.height/H;
     marks=ordered.map((f,i)=>{const m={n:i+1,x:f.cx*sx,y:f.cy*sy};clamp(m);return m});
-    selected=null;redoStack=[];setMode('edit');
+    selected.clear();redoStack=[];setMode('edit');
 
     const cap=(Number.isFinite(expectedCount)&&expectedCount>0)?` The scan was capped at ${expectedCount}.`:'';
     show(`${marks.length} likely face${marks.length===1?'':'s'} kept.${cap} Tap a number twice to delete a false detection, and tap any missed face to add it.`);
@@ -327,9 +341,9 @@ auto.onclick=async()=>{
   }
 };
 
-undo.onclick=()=>{if(marks.length){redoStack.push(marks.pop());selected=null;draw();ui()}};
+undo.onclick=()=>{if(marks.length){redoStack.push(marks.pop());selected.clear();draw();ui()}};
 redo.onclick=()=>{if(redoStack.length){const m=redoStack.pop();m.n=marks.length+1;marks.push(m);draw();ui()}};
-clear.onclick=()=>{if(confirm('Remove every number?')){marks=[];redoStack=[];selected=null;draw();ui();hide()}};
+clear.onclick=()=>{if(confirm('Remove every number?')){marks=[];redoStack=[];selected.clear();draw();ui();hide()}};
 size.oninput=()=>{marks.forEach(clamp);draw()};
 outline.oninput=draw;
 
